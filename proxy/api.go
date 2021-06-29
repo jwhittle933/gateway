@@ -5,11 +5,15 @@ import (
 	"net/http"
 	"path"
 
+	"github.com/jwhittle933/gonads/result"
 	"github.com/valyala/fasthttp"
-
-	"github.com/jwhittle933/gateway/proxy/result"
 )
 
+const (
+	Default string = "default"
+)
+
+// Connection represents a connection from one service to another
 type Connection struct {
 	BaseUrl        string
 	DefaultHeaders *fasthttp.RequestHeader
@@ -20,17 +24,21 @@ type Connection struct {
 type RequestFactories map[string]FactoryFunc
 type FactoryFunc func([]byte, ...interface{}) *fasthttp.Request
 
-type Option struct {
+type Config struct {
 	Name          string
 	Method        string
 	FormattedPath string
 	Headers       map[string]string
 }
 
-func New(client *fasthttp.Client, baseURL string, defaultHeaders map[string]string, options ...Option) *Connection {
-	return (&Connection{BaseUrl: baseURL, client: client, factories: RequestFactories{}}).
+func New(baseURL string, defaultHeaders map[string]string, options ...Config) *Connection {
+	return (&Connection{BaseUrl: baseURL, client: &fasthttp.Client{}, factories: RequestFactories{}}).
 		withFactories(options...).
 		withDefaultHeaders(defaultHeaders)
+}
+
+func NewConfig(name, method, formattedPath string, headers map[string]string) Config {
+	return Config{name, method, formattedPath, headers}
 }
 
 // Submit performs the named request supplied to the factory
@@ -48,21 +56,23 @@ func New(client *fasthttp.Client, baseURL string, defaultHeaders map[string]stri
 func (c Connection) Submit(name string, body []byte, with ...interface{}) result.Result {
 	req := c.factories.Request(name, body, with...)
 	res := fasthttp.AcquireResponse()
-	if err := c.client.Do(req, res); err != nil {
-		return result.WrapErr(err)
-	}
 
-	return result.Wrap(res)
+	err := c.client.Do(req, res)
+	return result.Handle(res, err)
 }
 
-func (c *Connection) withFactories(options ...Option) *Connection {
-	if len(options) == 0 {
-		c.factories.Set("default", c.newFactoryFunc(Option{"default", http.MethodGet, "", nil}))
+func (c Connection) SubmitDefault(body []byte) result.Result {
+	return c.Submit("", body)
+}
+
+func (c *Connection) withFactories(configs ...Config) *Connection {
+	if len(configs) == 0 {
+		c.factories.Set("default", c.newFactoryFunc(Config{"default", http.MethodGet, "", nil}))
 		return c
 	}
 
-	for _, op := range options {
-		c.factories.Set(op.Name, c.newFactoryFunc(op))
+	for _, conf := range configs {
+		c.factories.Set(conf.Name, c.newFactoryFunc(conf))
 	}
 
 	return c
@@ -81,17 +91,17 @@ func (c *Connection) withDefaultHeaders(headers map[string]string) *Connection {
 	return c
 }
 
-func (c *Connection) newFactoryFunc(option Option) FactoryFunc {
+func (c *Connection) newFactoryFunc(config Config) FactoryFunc {
 	return func(body []byte, pathParams ...interface{}) *fasthttp.Request {
 		req := fasthttp.AcquireRequest()
 		c.DefaultHeaders.CopyTo(&req.Header)
 
-		req.Header.SetMethod(option.Method)
-		req.SetRequestURI(path.Join(c.BaseUrl, applyPathOpts(option.FormattedPath, pathParams...)))
+		req.Header.SetMethod(config.Method)
+		req.SetRequestURI(path.Join(c.BaseUrl, applyPathOpts(config.FormattedPath, pathParams...)))
 		req.SetBody(body)
 
-		if option.Headers != nil {
-			for k, v := range option.Headers {
+		if config.Headers != nil {
+			for k, v := range config.Headers {
 				req.Header.Set(k, v)
 			}
 		}
@@ -124,6 +134,7 @@ func applyPathOpts(basePath string, params ...interface{}) string {
 	return fmt.Sprintf(basePath, params...)
 }
 
+// Proxy result pipeline result.Binder helper
 func Proxy(ctx *fasthttp.RequestCtx) result.Binder {
 	return func(val interface{}) result.Result {
 		res := val.(*fasthttp.Response)

@@ -11,7 +11,7 @@ import (
 
 	"github.com/valyala/fasthttp"
 
-	"github.com/jwhittle933/gateway/logger"
+	"github.com/jwhittle933/lext"
 )
 
 type GracefulListener struct {
@@ -20,7 +20,7 @@ type GracefulListener struct {
 	done        chan struct{}
 	connCount   uint64
 	shutdown    uint64
-	logger      logger.Logger
+	logger      lext.Logger
 }
 
 type gracefulConn struct {
@@ -28,7 +28,7 @@ type gracefulConn struct {
 	ln *GracefulListener
 }
 
-func New(ln net.Listener, maxWait time.Duration, logger logger.Logger) *GracefulListener {
+func New(ln net.Listener, maxWait time.Duration, logger lext.Logger) *GracefulListener {
 	return &GracefulListener{
 		ln:          ln,
 		maxWaitTime: maxWait,
